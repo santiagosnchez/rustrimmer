@@ -13,3 +13,9 @@ rayon = "1.7"
 assert_cmd = "2.0"
 predicates = "2.1"
 tempfile = "3.5"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
