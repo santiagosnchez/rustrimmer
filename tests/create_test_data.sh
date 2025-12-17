@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Creates tests/sample.fastq.gz from tests/sample.fastq
+# Creates tests/sample.fastq.gz and paired gz files from tests/*.fastq
 cd "$(dirname "$0")"
-gzip -c sample.fastq > sample.fastq.gz
-echo "Created sample.fastq.gz"
+for f in *.fastq; do
+	gzip -c "$f" > "${f%.fastq}.fastq.gz"
+	echo "Created ${f%.fastq}.fastq.gz"
+    rm "$f"
+done
