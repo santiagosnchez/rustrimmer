@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::error::Error;
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufRead, BufReader, Read};
 use bio::io::fastq;
 use flate2::read::MultiGzDecoder;
 
@@ -23,13 +23,28 @@ struct Args {
 
 fn open_input(path: &str) -> Result<Box<dyn Read>, Box<dyn Error>> {
     if path == "-" {
-        Ok(Box::new(io::stdin()))
-    } else if path.ends_with(".gz") {
-        let f = File::open(path)?;
-        Ok(Box::new(MultiGzDecoder::new(f)))
+        // Peek stdin to detect gzip magic (0x1f 0x8b)
+        let mut br = BufReader::new(io::stdin());
+        let buf = br.fill_buf()?;
+        let is_gz = buf.len() >= 2 && buf[0] == 0x1f && buf[1] == 0x8b;
+        // end borrow scope
+        let _ = buf;
+        if is_gz {
+            Ok(Box::new(MultiGzDecoder::new(br)))
+        } else {
+            Ok(Box::new(br))
+        }
     } else {
         let f = File::open(path)?;
-        Ok(Box::new(f))
+        let mut br = BufReader::new(f);
+        let buf = br.fill_buf()?;
+        let is_gz = buf.len() >= 2 && buf[0] == 0x1f && buf[1] == 0x8b;
+        let _ = buf;
+        if is_gz {
+            Ok(Box::new(MultiGzDecoder::new(br)))
+        } else {
+            Ok(Box::new(br))
+        }
     }
 }
 
@@ -40,19 +55,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         (Some(path), None, None) => {
             // single-end mode
             let reader = open_input(&path)?;
-    let fq = fastq::Reader::new(BufReader::new(reader));
+            let fq = fastq::Reader::new(BufReader::new(reader));
 
-    let mut read_count: u64 = 0;
-    let mut base_count: u64 = 0;
+            let mut read_count: u64 = 0;
+            let mut base_count: u64 = 0;
 
-    for result in fq.records() {
-        let rec = result?;
-        read_count += 1;
-        base_count += rec.seq().len() as u64;
-    }
+            for result in fq.records() {
+                let rec = result?;
+                read_count += 1;
+                base_count += rec.seq().len() as u64;
+            }
 
-    println!("reads: {}", read_count);
-    println!("bases: {}", base_count);
+            println!("reads: {}", read_count);
+            println!("bases: {}", base_count);
         }
         (None, Some(p1), Some(p2)) => {
             // paired-end mode: process both files and report per-file counts
