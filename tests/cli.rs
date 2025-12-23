@@ -3,7 +3,7 @@ use predicates::prelude::*;
 
 #[test]
 fn fastq_counts_match_expected() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("rusty")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("rusty"));
     let dir = env!("CARGO_MANIFEST_DIR");
     let p1 = format!("{}/tests/sample_R1.fastq.gz", dir);
     let p2 = format!("{}/tests/sample_R2.fastq.gz", dir);
