@@ -1,9 +1,17 @@
 use clap::Parser;
 use std::error::Error;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, BufReader, Write};
+use std::io::BufWriter;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use bio::io::fastq;
-use flate2::read::MultiGzDecoder;
+
+mod io_utils;
+mod trim;
+
+use crate::io_utils::open_input;
+use crate::trim::trim_record;
 
 #[derive(Parser)]
 #[command(author, version, about = "Simple FASTQ reader: counts reads and bases")]
@@ -19,33 +27,22 @@ struct Args {
     /// Paired-end R2 (e.g. sample_R2.fastq or .fastq.gz)
     #[arg(long)]
     p2: Option<String>,
-}
 
-fn open_input(path: &str) -> Result<Box<dyn Read>, Box<dyn Error>> {
-    if path == "-" {
-        // Peek stdin to detect gzip magic (0x1f 0x8b)
-        let mut br = BufReader::new(io::stdin());
-        let buf = br.fill_buf()?;
-        let is_gz = buf.len() >= 2 && buf[0] == 0x1f && buf[1] == 0x8b;
-        // end borrow scope
-        let _ = buf;
-        if is_gz {
-            Ok(Box::new(MultiGzDecoder::new(br)))
-        } else {
-            Ok(Box::new(br))
-        }
-    } else {
-        let f = File::open(path)?;
-        let mut br = BufReader::new(f);
-        let buf = br.fill_buf()?;
-        let is_gz = buf.len() >= 2 && buf[0] == 0x1f && buf[1] == 0x8b;
-        let _ = buf;
-        if is_gz {
-            Ok(Box::new(MultiGzDecoder::new(br)))
-        } else {
-            Ok(Box::new(br))
-        }
-    }
+    /// Trim low-quality ends (enable trimming mode)
+    #[arg(long)]
+    trim: bool,
+
+    /// Quality threshold (Phred) for trimming ends; default 20
+    #[arg(long, default_value_t = 20)]
+    qual: u8,
+
+    /// Minimum length to keep a read after trimming; default 30
+    #[arg(long, default_value_t = 30)]
+    min_len: usize,
+
+    /// Output FASTQ file (defaults to stdout). Use .gz to write gzipped output.
+    #[arg(long)]
+    out: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -54,20 +51,56 @@ fn main() -> Result<(), Box<dyn Error>> {
     match (args.input, args.p1, args.p2) {
         (Some(path), None, None) => {
             // single-end mode
-            let reader = open_input(&path)?;
-            let fq = fastq::Reader::new(BufReader::new(reader));
+            if args.trim {
+                // trimming mode
+                let reader = open_input(&path)?;
+                let fq = fastq::Reader::new(BufReader::new(reader));
 
-            let mut read_count: u64 = 0;
-            let mut base_count: u64 = 0;
+                // prepare output writer
+                let writer: Box<dyn Write> = match &args.out {
+                    Some(o) if o.ends_with(".gz") => {
+                        let f = File::create(o)?;
+                        Box::new(GzEncoder::new(BufWriter::new(f), Compression::default()))
+                    }
+                    Some(o) => {
+                        let f = File::create(o)?;
+                        Box::new(BufWriter::new(f))
+                    }
+                    None => Box::new(io::stdout()),
+                };
+                let mut fqw = fastq::Writer::new(writer);
 
-            for result in fq.records() {
-                let rec = result?;
-                read_count += 1;
-                base_count += rec.seq().len() as u64;
+                let mut kept: u64 = 0;
+                let mut dropped: u64 = 0;
+
+                for result in fq.records() {
+                    let rec = result?;
+                    if let Some((seq, qual)) = trim_record(rec.qual(), rec.seq(), args.qual, args.min_len) {
+                        // write record with same id/desc
+                        fqw.write(&rec.id(), rec.desc(), &seq, &qual)?;
+                        kept += 1;
+                    } else {
+                        dropped += 1;
+                    }
+                }
+
+                eprintln!("trimmed kept: {}  dropped: {}", kept, dropped);
+            } else {
+                let reader = open_input(&path)?;
+                let fq = fastq::Reader::new(BufReader::new(reader));
+
+                let mut read_count: u64 = 0;
+                let mut base_count: u64 = 0;
+
+                for result in fq.records() {
+                    let rec = result?;
+                    read_count += 1;
+                    base_count += rec.seq().len() as u64;
+                }
+
+                println!("reads: {}", read_count);
+                println!("bases: {}", base_count);
             }
-
-            println!("reads: {}", read_count);
-            println!("bases: {}", base_count);
         }
         (None, Some(p1), Some(p2)) => {
             // paired-end mode: process both files and report per-file counts
