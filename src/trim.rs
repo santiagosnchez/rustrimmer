@@ -120,4 +120,36 @@ mod tests {
         let res = trim_record(&qual, seq, 20, 1, 1);
         assert!(res.is_none());
     }
+
+    #[test]
+    fn sliding_window_only_trims_edges_not_center() {
+        // Construct a read with low-quality edges and a low-quality center
+        // Layout: [low-edge x3][high x4][low-center x3][high x4][low-edge x3] => total 18
+        let mut seq = Vec::new();
+        seq.extend_from_slice(b"AAAAAAAAA" /* placeholder */);
+
+        // qualities: low=10, high=40 (Phred)
+        let mut quals: Vec<u8> = Vec::new();
+        quals.extend(vec![10u8 + 33; 3]); // left edge low
+        quals.extend(vec![40u8 + 33; 4]); // high
+        quals.extend(vec![10u8 + 33; 3]); // low center
+        quals.extend(vec![40u8 + 33; 4]); // high
+        quals.extend(vec![10u8 + 33; 3]); // right edge low
+
+        // sequence length must match quals
+        let seq = vec![b'A'; quals.len()];
+
+        // Window trimming with window=3 and qual_thr=20 should remove only edges
+        let res = trim_record(&quals, &seq, 20, 1, 3);
+        assert!(res.is_some());
+        let (s, q) = res.unwrap();
+        // After trimming edges of length 3 each, remaining length should be total - 6
+        assert_eq!(s.len(), quals.len() - 6);
+        // central low-quality block should still be present inside remaining quals
+        let remaining_quals: Vec<u8> = q.into_iter().collect();
+        // check that there exists a run of three low-quality chars (10+33)
+        let low_char = 10u8 + 33;
+        let has_center_low = remaining_quals.windows(3).any(|w| w == [low_char, low_char, low_char]);
+        assert!(has_center_low, "expected central low-quality region to remain");
+    }
 }
