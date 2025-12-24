@@ -40,6 +40,10 @@ struct Args {
     #[arg(long, default_value_t = 30)]
     min_len: usize,
 
+    /// Sliding window size for trimming; use 1 to check single-base quality (default)
+    #[arg(long, default_value_t = 1)]
+    window: usize,
+
     /// Output FASTQ file (defaults to stdout). Use .gz to write gzipped output.
     #[arg(long)]
     out: Option<String>,
@@ -75,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                 for result in fq.records() {
                     let rec = result?;
-                    if let Some((seq, qual)) = trim_record(rec.qual(), rec.seq(), args.qual, args.min_len) {
+                    if let Some((seq, qual)) = trim_record(rec.qual(), rec.seq(), args.qual, args.min_len, args.window) {
                         // write record with same id/desc
                         fqw.write(&rec.id(), rec.desc(), &seq, &qual)?;
                         kept += 1;
