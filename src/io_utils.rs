@@ -97,10 +97,11 @@ mod tests {
             write!(gz, "hello-stdin-gz")?;
             gz.finish()?;
         }
-
-        // simulate stdin with gz_data
-        let cursor = std::io::Cursor::new(gz_data);
-        let mut reader = open_input("-")?;
+        // write gz content to a temporary file and open it (avoids blocking on real stdin)
+        let mut tmp = NamedTempFile::new()?;
+        tmp.write_all(&gz_data)?;
+        let path = tmp.path().to_str().unwrap().to_string();
+        let mut reader = open_input(&path)?;
         let mut buf = String::new();
         reader.read_to_string(&mut buf)?;
         assert_eq!(buf, "hello-stdin-gz");
