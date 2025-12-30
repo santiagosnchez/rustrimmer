@@ -1,7 +1,7 @@
+use flate2::read::MultiGzDecoder;
 use std::error::Error;
 use std::fs::File;
-use std::io::{self, Read, BufRead, BufReader};
-use flate2::read::MultiGzDecoder;
+use std::io::{self, BufRead, BufReader, Read};
 
 pub fn open_input(path: &str) -> Result<Box<dyn Read>, Box<dyn Error>> {
     if path == "-" {
@@ -28,13 +28,32 @@ pub fn open_input(path: &str) -> Result<Box<dyn Read>, Box<dyn Error>> {
     }
 }
 
+/// Given an output base name, return file paths for R1, R2 and singletons.
+/// If `base` ends with `.gz` the returned names will also end with `.gz`.
+pub fn make_output_files(base: &str) -> (String, String, String) {
+    if base.ends_with(".gz") {
+        let trimmed = base.strip_suffix(".gz").unwrap_or(base);
+        (
+            format!("{}{}_R1.fastq.gz", trimmed, ""),
+            format!("{}{}_R2.fastq.gz", trimmed, ""),
+            format!("{}{}_singletons.fastq.gz", trimmed, ""),
+        )
+    } else {
+        (
+            format!("{}{}_R1.fastq", base, ""),
+            format!("{}{}_R2.fastq", base, ""),
+            format!("{}{}_singletons.fastq", base, ""),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::open_input;
-    use tempfile::NamedTempFile;
-    use std::io::{Read, Write};
     use flate2::write::GzEncoder;
     use flate2::Compression;
+    use std::io::{Read, Write};
+    use tempfile::NamedTempFile;
 
     #[test]
     fn open_plain_file_reads_contents() -> Result<(), Box<dyn std::error::Error>> {
@@ -67,5 +86,32 @@ mod tests {
         reader.read_to_string(&mut buf)?;
         assert_eq!(buf, "hello-gz");
         Ok(())
+    }
+
+    #[test]
+    fn open_stdin_gz_reads_decompressed() -> Result<(), Box<dyn std::error::Error>> {
+        // create gz content in memory
+        let mut gz_data: Vec<u8> = Vec::new();
+        {
+            let mut gz = GzEncoder::new(&mut gz_data, Compression::default());
+            write!(gz, "hello-stdin-gz")?;
+            gz.finish()?;
+        }
+
+        // simulate stdin with gz_data
+        let cursor = std::io::Cursor::new(gz_data);
+        let mut reader = open_input("-")?;
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf)?;
+        assert_eq!(buf, "hello-stdin-gz");
+        Ok(())
+    }
+
+    #[test]
+    fn make_output_files_gz() {
+        let (r1, r2, single) = super::make_output_files("output.gz");
+        assert_eq!(r1, "output_R1.fastq.gz");
+        assert_eq!(r2, "output_R2.fastq.gz");
+        assert_eq!(single, "output_singletons.fastq.gz");
     }
 }
