@@ -1,11 +1,11 @@
+use bio::io::fastq;
 use clap::Parser;
-use std::error::Error;
-use std::fs::File;
-use std::io::{self, BufReader, Write};
-use std::io::BufWriter;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use bio::io::fastq;
+use std::error::Error;
+use std::fs::File;
+use std::io::BufWriter;
+use std::io::{self, BufReader, Write};
 
 mod io_utils;
 mod trim;
@@ -14,7 +14,7 @@ use crate::io_utils::open_input;
 use crate::trim::trim_record;
 
 #[derive(Parser)]
-#[command(author, version, about = "Simple FASTQ reader: counts reads and bases")]
+#[command(author, version, about = "Simple FASTQ quality trimmer: removes low-quality bases from read ends using sliding window approach", long_about = None)]
 struct Args {
     /// Input FASTQ (use '-' for stdin). Supports .gz compressed files.
     /// Provide either a single input or both `--p1` and `--p2` for paired-end files.
@@ -28,10 +28,6 @@ struct Args {
     #[arg(long)]
     p2: Option<String>,
 
-    /// Trim low-quality ends (enable trimming mode)
-    #[arg(long)]
-    trim: bool,
-
     /// Quality threshold (Phred) for trimming ends; default 20
     #[arg(long, default_value_t = 20)]
     qual: u8,
@@ -44,9 +40,11 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     window: usize,
 
-    /// Output FASTQ file (defaults to stdout). Use .gz to write gzipped output.
+    /// Output base name for paired output files (required for paired mode).
+    /// For paired mode this will create `<output>_R1.fastq(.gz)`,
+    /// `<output>_R2.fastq(.gz)` and `<output>_singletons.fastq(.gz)`.
     #[arg(long)]
-    out: Option<String>,
+    output: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -54,14 +52,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match (args.input, args.p1, args.p2) {
         (Some(path), None, None) => {
-            // single-end mode
-            if args.trim {
-                // trimming mode
+            // single-end mode: trimming enabled by default (counts kept for logging)
                 let reader = open_input(&path)?;
                 let fq = fastq::Reader::new(BufReader::new(reader));
 
                 // prepare output writer
-                let writer: Box<dyn Write> = match &args.out {
+            let writer: Box<dyn Write> = match &args.output {
                     Some(o) if o.ends_with(".gz") => {
                         let f = File::create(o)?;
                         Box::new(GzEncoder::new(BufWriter::new(f), Compression::default()))
