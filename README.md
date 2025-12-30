@@ -2,61 +2,58 @@
 
 This repo is a minimal Rust starter for NGS tasks. It includes a tiny CLI that counts reads and bases from a FASTQ/FASTQ.GZ file.
 
+## **Release build & distribution**
+
 Build:
 ```bash
 cargo build --release
 ```
 
+Check args:
+```bash
+./target/release/rustrimmer --help
+# Simple FASTQ quality trimmer: removes low-quality bases from read ends using sliding window approach
+
+# Usage: rustrimmer [OPTIONS] [INPUT]
+
+# Arguments:
+#   [INPUT]  Input FASTQ (use '-' for stdin). Supports .gz compressed files. Provide either a single input or both `--p1` and `--p2` for paired-end files
+
+# Options:
+#       --p1 <P1>            Paired-end R1 (e.g. sample_R1.fastq or .fastq.gz)
+#       --p2 <P2>            Paired-end R2 (e.g. sample_R2.fastq or .fastq.gz)
+#       --qual <QUAL>        Quality threshold (Phred) for trimming ends; default 20 [default: 20]
+#       --min-len <MIN_LEN>  Minimum length to keep a read after trimming; default 30 [default: 30]
+#       --window <WINDOW>    Sliding window size for trimming; use 1 to check single-base quality (default) [default: 1]
+#       --output <OUTPUT>    Output base name for paired output files (required for paired mode). For paired mode this will create `<output>_R1.fastq(.gz)`, `<output>_R2.fastq(.gz)` and `<output>_singletons.fastq(.gz)`
+#   -h, --help               Print help
+#   -V, --version            Print version
+```
+
+## **Generate a test dataset**
+
+```bash
+python3 tests/generate_test_fastq.py --number 100 --bad_fraction 0.3 > tests/sample_R1.fastq
+python3 tests/generate_test_fastq.py --number 100 --bad_fraction 0.3 > tests/sample_R2.fastq
+```
+
+## **Run code**
+
 Run with Cargo (example):
 ```bash
-cargo run -- --p1 tests/sample_R1.fastq.gz --p2 tests/sample_R2.fastq.gz
+./target/release/rustrimmer --p1 tests/sample_R1.fastq --p2 tests/sample_R2.fastq --output tests/result
 # reads_R1: 100
-# bases_R1: 5000
 # reads_R2: 100
-# bases_R2: 5000
-# pairs: 100
+# pairs_total: 100
+# pairs_kept: 54
+# pairs_dropped: 8
+# singletons: 38
 ```
 
-Next ideas:
-- Add multi-threaded parsing with `rayon`.
-- Implement k-mer counting or simple aligner examples.
-- Add tests and CI (GitHub Actions).
-
-**Release build & distribution**
-
-- Build an optimized release binary:
-
+Output files:
 ```bash
-cargo build --release
-```
-
-- The resulting binary is at `target/release/rusty`.
-
-- Help example:
-
-```bash
-./target/release/rusty --help
-```
-
-- Run example:
-
-```bash
-./target/release/rusty --p1 tests/sample_R1.fastq.gz --p2 tests/sample_R2.fastq.gz
-```
-
-- Build a static-musl binary for portability:
-
-```bash
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
-# binary: target/x86_64-unknown-linux-musl/release/rusty
-```
-
-- Further shrink the binary (optional): use `strip`, `upx`, or `cargo-strip`:
-
-```sh
-# remove symbols
-strip target/release/rusty
-# or compress
-upx --best target/release/rusty
+ls ./tests/result*
+# ./tests/result_R1.fastq
+# ./tests/result_R2.fastq
+# ./tests/result_singletons.fastq
 ```
