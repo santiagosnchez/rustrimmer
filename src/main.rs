@@ -53,88 +53,190 @@ fn main() -> Result<(), Box<dyn Error>> {
     match (args.input, args.p1, args.p2) {
         (Some(path), None, None) => {
             // single-end mode: trimming enabled by default (counts kept for logging)
-                let reader = open_input(&path)?;
-                let fq = fastq::Reader::new(BufReader::new(reader));
+            let reader = open_input(&path)?;
+            let fq = fastq::Reader::new(BufReader::new(reader));
 
-                // prepare output writer
+            // prepare output writer
             let writer: Box<dyn Write> = match &args.output {
-                    Some(o) if o.ends_with(".gz") => {
-                        let f = File::create(o)?;
-                        Box::new(GzEncoder::new(BufWriter::new(f), Compression::default()))
-                    }
-                    Some(o) => {
-                        let f = File::create(o)?;
-                        Box::new(BufWriter::new(f))
-                    }
-                    None => Box::new(io::stdout()),
-                };
-                let mut fqw = fastq::Writer::new(writer);
-
-                let mut kept: u64 = 0;
-                let mut dropped: u64 = 0;
-
-                for result in fq.records() {
-                    let rec = result?;
-                    if let Some((seq, qual)) = trim_record(rec.qual(), rec.seq(), args.qual, args.min_len, args.window) {
-                        // write record with same id/desc
-                        fqw.write(&rec.id(), rec.desc(), &seq, &qual)?;
-                        kept += 1;
-                    } else {
-                        dropped += 1;
-                    }
+                Some(o) if o.ends_with(".gz") => {
+                    let f = File::create(o)?;
+                    Box::new(GzEncoder::new(BufWriter::new(f), Compression::default()))
                 }
-
-                eprintln!("trimmed kept: {}  dropped: {}", kept, dropped);
-            } else {
-                let reader = open_input(&path)?;
-                let fq = fastq::Reader::new(BufReader::new(reader));
-
-                let mut read_count: u64 = 0;
-                let mut base_count: u64 = 0;
-
-                for result in fq.records() {
-                    let rec = result?;
-                    read_count += 1;
-                    base_count += rec.seq().len() as u64;
+                Some(o) => {
+                    let f = File::create(o)?;
+                    Box::new(BufWriter::new(f))
                 }
+                None => Box::new(io::stdout()),
+            };
+            let mut fqw = fastq::Writer::new(writer);
 
-                println!("reads: {}", read_count);
-                println!("bases: {}", base_count);
+            let mut kept: u64 = 0;
+            let mut dropped: u64 = 0;
+            let mut read_count: u64 = 0;
+            let mut base_count: u64 = 0;
+
+            for result in fq.records() {
+                let rec = result?;
+                read_count += 1;
+                base_count += rec.seq().len() as u64;
+                if let Some((seq, qual)) =
+                    trim_record(rec.qual(), rec.seq(), args.qual, args.min_len, args.window)
+                {
+                    // write record with same id/desc
+                    fqw.write(rec.id(), rec.desc(), &seq, &qual)?;
+                    kept += 1;
+                } else {
+                    dropped += 1;
+                }
             }
+
+            eprintln!("trimmed kept: {}  dropped: {}", kept, dropped);
+            println!("reads: {}", read_count);
+            println!("bases: {}", base_count);
         }
         (None, Some(p1), Some(p2)) => {
-            // paired-end mode: process both files and report per-file counts
-            let r1 = open_input(&p1)?;
-            let r2 = open_input(&p2)?;
+            // paired-end mode: require output base name to write R1/R2 and singletons
+            let out_base = match &args.output {
+                Some(o) => o.clone(),
+                None => {
+                    eprintln!("Error: --output is required for paired-end mode");
+                    std::process::exit(2);
+                }
+            };
 
-            let fq1 = fastq::Reader::new(BufReader::new(r1));
-            let fq2 = fastq::Reader::new(BufReader::new(r2));
+            // build output filenames (handles optional .gz suffix)
+            let (r1_name, r2_name, single_name) = io_utils::make_output_files(&out_base);
 
-            let mut reads1: u64 = 0;
-            let mut bases1: u64 = 0;
-            for result in fq1.records() {
-                let rec = result?;
-                reads1 += 1;
-                bases1 += rec.seq().len() as u64;
+            // open input readers for counting/processing
+            let _ = open_input(&p1)?; // validate paths early
+            let _ = open_input(&p2)?;
+
+            let r1_proc = open_input(&p1)?;
+            let r2_proc = open_input(&p2)?;
+
+            let fq1 = fastq::Reader::new(BufReader::new(r1_proc));
+            let fq2 = fastq::Reader::new(BufReader::new(r2_proc));
+
+            // prepare output writers
+            let make_writer = |name: &str| -> Result<Box<dyn Write>, Box<dyn Error>> {
+                if name.ends_with(".gz") {
+                    let f = File::create(name)?;
+                    Ok(Box::new(GzEncoder::new(
+                        BufWriter::new(f),
+                        Compression::default(),
+                    )))
+                } else {
+                    let f = File::create(name)?;
+                    Ok(Box::new(BufWriter::new(f)))
+                }
+            };
+
+            let w1 = make_writer(&r1_name)?;
+            let w2 = make_writer(&r2_name)?;
+            let ws = make_writer(&single_name)?;
+
+            let mut w_r1 = fastq::Writer::new(w1);
+            let mut w_r2 = fastq::Writer::new(w2);
+            let mut w_s = fastq::Writer::new(ws);
+
+            // iterate records in lock-step, handle leftovers as singletons
+            let mut iter1 = fq1.records();
+            let mut iter2 = fq2.records();
+
+            let mut pairs_total: u64 = 0;
+            let mut pairs_kept: u64 = 0;
+            let mut pairs_dropped: u64 = 0;
+            let mut singletons: u64 = 0;
+            let mut read_r1: u64 = 0;
+            let mut read_r2: u64 = 0;
+
+            loop {
+                match (iter1.next(), iter2.next()) {
+                    (None, None) => break,
+                    (Some(r1_res), Some(r2_res)) => {
+                        let rec1 = r1_res?;
+                        let rec2 = r2_res?;
+                        read_r1 += 1;
+                        read_r2 += 1;
+                        pairs_total += 1;
+
+                        let t1 = trim_record(
+                            rec1.qual(),
+                            rec1.seq(),
+                            args.qual,
+                            args.min_len,
+                            args.window,
+                        );
+                        let t2 = trim_record(
+                            rec2.qual(),
+                            rec2.seq(),
+                            args.qual,
+                            args.min_len,
+                            args.window,
+                        );
+
+                        match (t1, t2) {
+                            (Some((seq1, qual1)), Some((seq2, qual2))) => {
+                                w_r1.write(rec1.id(), rec1.desc(), &seq1, &qual1)?;
+                                w_r2.write(rec2.id(), rec2.desc(), &seq2, &qual2)?;
+                                pairs_kept += 1;
+                            }
+                            (Some((seq1, qual1)), None) => {
+                                w_s.write(rec1.id(), rec1.desc(), &seq1, &qual1)?;
+                                singletons += 1;
+                            }
+                            (None, Some((seq2, qual2))) => {
+                                w_s.write(rec2.id(), rec2.desc(), &seq2, &qual2)?;
+                                singletons += 1;
+                            }
+                            (None, None) => {
+                                pairs_dropped += 1;
+                            }
+                        }
+                    }
+                    (Some(r1_res), None) => {
+                        let rec1 = r1_res?;
+                        read_r1 += 1;
+                        // no partner - handle as singleton if it survives trimming
+                        if let Some((seq1, qual1)) = trim_record(
+                            rec1.qual(),
+                            rec1.seq(),
+                            args.qual,
+                            args.min_len,
+                            args.window,
+                        ) {
+                            w_s.write(rec1.id(), rec1.desc(), &seq1, &qual1)?;
+                            singletons += 1;
+                        }
+                    }
+                    (None, Some(r2_res)) => {
+                        let rec2 = r2_res?;
+                        read_r2 += 1;
+                        if let Some((seq2, qual2)) = trim_record(
+                            rec2.qual(),
+                            rec2.seq(),
+                            args.qual,
+                            args.min_len,
+                            args.window,
+                        ) {
+                            w_s.write(rec2.id(), rec2.desc(), &seq2, &qual2)?;
+                            singletons += 1;
+                        }
+                    }
+                }
             }
 
-            let mut reads2: u64 = 0;
-            let mut bases2: u64 = 0;
-            for result in fq2.records() {
-                let rec = result?;
-                reads2 += 1;
-                bases2 += rec.seq().len() as u64;
-            }
-
-            println!("reads_R1: {}", reads1);
-            println!("bases_R1: {}", bases1);
-            println!("reads_R2: {}", reads2);
-            println!("bases_R2: {}", bases2);
-
-            if reads1 != reads2 {
-                eprintln!("warning: R1 and R2 have different read counts ({} != {})", reads1, reads2);
-            } else {
-                println!("pairs: {}", reads1);
+            println!("reads_R1: {}", read_r1);
+            println!("reads_R2: {}", read_r2);
+            println!("pairs_total: {}", pairs_total);
+            println!("pairs_kept: {}", pairs_kept);
+            println!("pairs_dropped: {}", pairs_dropped);
+            println!("singletons: {}", singletons);
+            if read_r1 != read_r2 {
+                eprintln!(
+                    "warning: R1 and R2 have different read counts ({} != {})",
+                    read_r1, read_r2
+                );
             }
         }
         _ => {
