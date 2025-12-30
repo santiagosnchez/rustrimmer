@@ -60,19 +60,33 @@ def generate_fastq_records(
     edge_frac_min: float = 0.10,
     edge_frac_max: float = 0.15,
     n: int = 40,
+    bad_fraction: float = 0.0,
 ) -> None:
     """Print `number` random FASTQ records to stdout using the configurable quality model."""
     for i in range(1, number + 1):
         seq = random_sequence(read_length)
-        qual = quality_model(
-            read_length,
-            p_low=p_low,
-            p_high=p_high,
-            drop_prob=drop_prob,
-            edge_frac_min=edge_frac_min,
-            edge_frac_max=edge_frac_max,
-            n=n,
-        )
+        # decide whether to make this record intentionally low-quality
+        if bad_fraction > 0 and random.random() < bad_fraction:
+            # produce a very poor-quality read (likely to be trimmed/dropped)
+            qual = quality_model(
+                read_length,
+                p_low=0.05,
+                p_high=0.15,
+                drop_prob=0.8,
+                edge_frac_min=0.4,
+                edge_frac_max=0.6,
+                n=n,
+            )
+        else:
+            qual = quality_model(
+                read_length,
+                p_low=p_low,
+                p_high=p_high,
+                drop_prob=drop_prob,
+                edge_frac_min=edge_frac_min,
+                edge_frac_max=edge_frac_max,
+                n=n,
+            )
         print(f"@{sequence_id(i)}")
         print(seq)
         print("+")
@@ -108,6 +122,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n", type=int, default=40, help="Binomial n (Phred max approximation)."
     )
+    parser.add_argument(
+        "--bad_fraction",
+        type=float,
+        default=0.0,
+        help="Fraction of reads to make very low-quality (0.0-1.0).",
+    )
     args = parser.parse_args()
     generate_fastq_records(
         read_length=args.read_length,
@@ -118,4 +138,5 @@ if __name__ == "__main__":
         edge_frac_min=args.edge_min,
         edge_frac_max=args.edge_max,
         n=args.n,
+        bad_fraction=args.bad_fraction,
     )
