@@ -49,6 +49,10 @@ struct Args {
     /// Force gzip compression for outputs (use `--gz` to enable)
     #[arg(long, default_value_t = false)]
     gz: bool,
+
+    /// Gzip compression level for outputs (0-9). Lower is faster; 1 is a sensible fast default.
+    #[arg(long, default_value_t = 1)]
+    gz_level: u32,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -71,7 +75,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let f = File::create(out_name)?;
             let writer: Box<dyn Write> = if args.gz {
-                Box::new(GzEncoder::new(BufWriter::new(f), Compression::default()))
+                Box::new(GzEncoder::new(BufWriter::new(f), Compression::new(args.gz_level)))
             } else {
                 Box::new(BufWriter::new(f))
             };
@@ -130,7 +134,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if args.gz {
                     Ok(Box::new(GzEncoder::new(
                         BufWriter::new(f),
-                        Compression::default(),
+                        Compression::new(args.gz_level),
                     )))
                 } else {
                     Ok(Box::new(BufWriter::new(f)))

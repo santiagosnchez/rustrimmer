@@ -27,6 +27,7 @@ Check args:
 #       --window <WINDOW>    Sliding window size for trimming; use 1 to check single-base quality (default) [default: 1]
 #       --output <OUTPUT>    Output file (single) or base name for paired outputs (required). For paired mode this will create `<output>_R1.fastq(.gz)`, `<output>_R2.fastq(.gz)` and `<output>_singletons.fastq(.gz)`.
 #       --gz                  Force gzip compression for outputs (use to create .gz files regardless of output name)
+#       --gz-level <LEVEL>    Gzip compression level (0-9). Lower is faster; 1 is a sensible fast default. [default: 1]
 #   -h, --help               Print help
 #   -V, --version            Print version
 ```
@@ -47,7 +48,7 @@ Run with Cargo (examples):
 # Single-end (requires --output)
 ./target/release/rustrimmer tests/sample_R1.fastq --output tests/result_single
 # Force gzip compression for outputs
-./target/release/rustrimmer --p1 tests/sample_R1.fastq --p2 tests/sample_R2.fastq --output tests/result --gz
+./target/release/rustrimmer --p1 tests/sample_R1.fastq --p2 tests/sample_R2.fastq --output tests/result --gz --gz-level 1
 ```
 
 Output files:
