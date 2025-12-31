@@ -6,6 +6,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::{BufReader, Write};
+use std::time::Instant;
 
 mod io_utils;
 mod trim;
@@ -57,6 +58,7 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
+    let start = Instant::now();
 
     match (args.input, args.p1, args.p2) {
         (Some(path), None, None) => {
@@ -75,7 +77,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let f = File::create(out_name)?;
             let writer: Box<dyn Write> = if args.gz {
-                Box::new(GzEncoder::new(BufWriter::new(f), Compression::new(args.gz_level)))
+                Box::new(GzEncoder::new(
+                    BufWriter::new(f),
+                    Compression::new(args.gz_level),
+                ))
             } else {
                 Box::new(BufWriter::new(f))
             };
@@ -254,6 +259,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             std::process::exit(2);
         }
     }
+
+    let elapsed = start.elapsed();
+    eprintln!("elapsed: {:.3} s", elapsed.as_secs_f64());
 
     Ok(())
 }
