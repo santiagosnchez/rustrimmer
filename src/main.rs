@@ -54,7 +54,7 @@ struct Args {
     gz: bool,
 
     /// Gzip compression level for outputs (0-9). Lower is faster; 1 is a sensible fast default.
-    #[arg(long, default_value_t = 6)]
+    #[arg(long, default_value_t = 3)]
     gz_level: u32,
 
     /// Use zstd compression for outputs (faster). Mutually exclusive with `--gz`.
