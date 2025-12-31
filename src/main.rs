@@ -5,7 +5,7 @@ use flate2::Compression;
 use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
-use std::io::{self, BufReader, Write};
+use std::io::{BufReader, Write};
 
 mod io_utils;
 mod trim;
@@ -60,26 +60,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             let reader = open_input(&path)?;
             let fq = fastq::Reader::new(BufReader::new(reader));
 
-            // prepare output writer (use `--gz` to enable compression)
-            let writer: Box<dyn Write> = match &args.output {
-                Some(o) => {
-                    let f = File::create(o)?;
-                    if args.gz {
-                        Box::new(GzEncoder::new(BufWriter::new(f), Compression::default()))
-                    } else {
-                        Box::new(BufWriter::new(f))
-                    }
-                }
+            // require `--output` (no stdout allowed)
+            let out_name = match &args.output {
+                Some(o) => o,
                 None => {
-                    if args.gz {
-                        Box::new(GzEncoder::new(
-                            BufWriter::new(io::stdout()),
-                            Compression::default(),
-                        ))
-                    } else {
-                        Box::new(io::stdout())
-                    }
+                    eprintln!("Error: --output is required; stdout is not allowed");
+                    std::process::exit(2);
                 }
+            };
+
+            let f = File::create(out_name)?;
+            let writer: Box<dyn Write> = if args.gz {
+                Box::new(GzEncoder::new(BufWriter::new(f), Compression::default()))
+            } else {
+                Box::new(BufWriter::new(f))
             };
             let mut fqw = fastq::Writer::new(writer);
 
