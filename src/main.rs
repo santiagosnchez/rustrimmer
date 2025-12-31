@@ -271,11 +271,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
 
-            println!("reads_R1: {}", read_r1);
-            println!("reads_R2: {}", read_r2);
-            println!("pairs_total: {}", pairs_total);
-            println!("pairs_kept: {}", pairs_kept);
-            println!("pairs_dropped: {}", pairs_dropped);
+            println!("R1 reads: {}", read_r1);
+            println!("R2 reads: {}", read_r2);
+            println!("total pairs: {}", pairs_total);
+            println!("pairs kept: {}", pairs_kept);
+            println!("pairs dropped: {}", pairs_dropped);
             println!("singletons: {}", singletons);
             if read_r1 != read_r2 {
                 eprintln!(
@@ -308,7 +308,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let elapsed = start.elapsed();
-    eprintln!("elapsed: {:.3} s", elapsed.as_secs_f64());
+    eprintln!("time elapsed: {:.3} s", elapsed.as_secs_f64());
 
     Ok(())
 }
