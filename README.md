@@ -27,7 +27,7 @@ Check args:
 #       --window <WINDOW>    Sliding window size for trimming; use 1 to check single-base quality (default) [default: 1]
 #       --output <OUTPUT>    Output file (single) or base name for paired outputs (required). For paired mode this will create `<output>_R1.fastq(.gz)`, `<output>_R2.fastq(.gz)` and `<output>_singletons.fastq(.gz)`.
 #       --gz                  Force gzip compression for outputs (use to create .gz files regardless of output name)
-#       --gz-level <LEVEL>    Gzip compression level (0-9). Higher gives better compression; 6 is a sensible default. [default: 6]
+#       --gz-level <LEVEL>    Gzip compression level (0-9). Higher gives better compression; 3 is a sensible default. [default: 3]
 #   -h, --help               Print help
 #   -V, --version            Print version
 ```
