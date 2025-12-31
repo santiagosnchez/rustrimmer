@@ -4,9 +4,11 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::error::Error;
 use std::fs::File;
+use std::io::copy;
 use std::io::BufWriter;
 use std::io::{BufReader, Write};
 use std::time::Instant;
+use zstd::stream::write::Encoder as ZstdEncoder;
 
 mod io_utils;
 mod trim;
@@ -47,18 +49,31 @@ struct Args {
     #[arg(long)]
     output: Option<String>,
 
-    /// Force gzip compression for outputs (use `--gz` to enable)
-    #[arg(long, default_value_t = false)]
+    /// Use gzip compression for outputs (enabled by default)
+    #[arg(long, default_value_t = true)]
     gz: bool,
 
     /// Gzip compression level for outputs (0-9). Lower is faster; 1 is a sensible fast default.
     #[arg(long, default_value_t = 1)]
     gz_level: u32,
+
+    /// Use zstd compression for outputs (faster). Mutually exclusive with `--gz`.
+    #[arg(long, default_value_t = false)]
+    zstd: bool,
+
+    /// zstd compression level (1-19). Lower is faster; default 3 is a sensible fast default.
+    #[arg(long, default_value_t = 3)]
+    zstd_level: i32,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let start = Instant::now();
+
+    if args.gz && args.zstd {
+        eprintln!("Error: --gz and --zstd are mutually exclusive");
+        std::process::exit(2);
+    }
 
     match (args.input, args.p1, args.p2) {
         (Some(path), None, None) => {
@@ -81,6 +96,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     BufWriter::new(f),
                     Compression::new(args.gz_level),
                 ))
+            } else if args.zstd {
+                Box::new(ZstdEncoder::new(BufWriter::new(f), args.zstd_level)?.auto_finish())
             } else {
                 Box::new(BufWriter::new(f))
             };
@@ -120,8 +137,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             };
 
-            // build output filenames based on `--gz` flag
-            let (r1_name, r2_name, single_name) = io_utils::make_output_files(&out_base, args.gz);
+            // build output filenames based on `--gz`/`--zstd` flags
+            let (r1_name, r2_name, single_name) =
+                io_utils::make_output_files(&out_base, args.gz, args.zstd);
+
+            // when using zstd we will write plain fastq files first then compress to .zst
+            let (r1_plain, r2_plain, single_plain) = if args.zstd {
+                (
+                    r1_name.trim_end_matches(".zst").to_string(),
+                    r2_name.trim_end_matches(".zst").to_string(),
+                    single_name.trim_end_matches(".zst").to_string(),
+                )
+            } else {
+                (r1_name.clone(), r2_name.clone(), single_name.clone())
+            };
 
             // open input readers for counting/processing
             let _ = open_input(&p1)?; // validate paths early
@@ -142,13 +171,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                         Compression::new(args.gz_level),
                     )))
                 } else {
+                    // For zstd we create plain fastq files (no streaming encoder here)
                     Ok(Box::new(BufWriter::new(f)))
                 }
             };
 
-            let w1 = make_writer(&r1_name)?;
-            let w2 = make_writer(&r2_name)?;
-            let ws = make_writer(&single_name)?;
+            let w1 = make_writer(&r1_plain)?;
+            let w2 = make_writer(&r2_plain)?;
+            let ws = make_writer(&single_plain)?;
 
             let mut w_r1 = fastq::Writer::new(w1);
             let mut w_r2 = fastq::Writer::new(w2);
@@ -252,6 +282,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "warning: R1 and R2 have different read counts ({} != {})",
                     read_r1, read_r2
                 );
+            }
+
+            // If zstd requested, compress the plain fastq files to .zst now.
+            if args.zstd {
+                let compress = |plain: &str, out_zst: &str| -> Result<(), Box<dyn Error>> {
+                    let mut src = File::open(plain)?;
+                    let dst = File::create(out_zst)?;
+                    let mut enc = ZstdEncoder::new(dst, args.zstd_level)?;
+                    copy(&mut src, &mut enc)?;
+                    enc.finish()?;
+                    std::fs::remove_file(plain)?;
+                    Ok(())
+                };
+
+                compress(&r1_plain, &r1_name)?;
+                compress(&r2_plain, &r2_name)?;
+                compress(&single_plain, &single_name)?;
             }
         }
         _ => {

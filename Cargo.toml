@@ -8,6 +8,7 @@ clap = { version = "4.3", features = ["derive"] }
 bio = "2.3"
 flate2 = "1.0"
 rayon = "1.7"
+zstd = "0.11"
 
 [dev-dependencies]
 assert_cmd = "2.0"

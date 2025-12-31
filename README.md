@@ -49,6 +49,8 @@ Run with Cargo (examples):
 ./target/release/rustrimmer tests/sample_R1.fastq --output tests/result_single
 # Force gzip compression for outputs
 ./target/release/rustrimmer --p1 tests/sample_R1.fastq --p2 tests/sample_R2.fastq --output tests/result --gz --gz-level 1
+# Use zstd compression (opt-in, faster but less universally supported)
+./target/release/rustrimmer --p1 tests/sample_R1.fastq --p2 tests/sample_R2.fastq --output tests/result --zstd --zstd-level 3
 ```
 
 Output files:
@@ -58,4 +60,13 @@ ls ./tests/result*
 # ./tests/result_R2.fastq
 # ./tests/result_singletons.fastq
 # When using `--gz` the output files will end with `.fastq.gz` (for example `tests/result_R1.fastq.gz`).
+# When using `--zstd` the output files will end with `.fastq.zst` (for example `tests/result_R1.fastq.zst`).
+```
+
+Compression notes:
+- **Default:** gzip is enabled by default for outputs (`--gz` is on by default) for maximum downstream compatibility.
+- **zstd (optional):** Use `--zstd` for faster compression and smaller files; this is opt-in because not all bioinformatics tools accept `.zst` compressed FASTQ files.
+- **Compatibility:** `.fastq.gz` is widely supported. `.fastq.zst` is a zstd-compressed FASTQ — many tools can read it (via `zstdcat` or libraries that support zstd) but it is not as universally accepted as gzip. If you need random-access/indexable FASTQ (e.g., htslib/tabix workflows), consider BGZF or produce a gzip output for compatibility.
+
+If you plan to benchmark compression speed/size, prefer `--zstd --zstd-level <n>` for faster runs and smaller files; a sensible default is `--zstd-level 3`.
 ```
