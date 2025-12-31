@@ -69,4 +69,3 @@ Compression notes:
 - **Compatibility:** `.fastq.gz` is widely supported. `.fastq.zst` is a zstd-compressed FASTQ — many tools can read it (via `zstdcat` or libraries that support zstd) but it is not as universally accepted as gzip. If you need random-access/indexable FASTQ (e.g., htslib/tabix workflows), consider BGZF or produce a gzip output for compatibility.
 
 If you plan to benchmark compression speed/size, prefer `--zstd --zstd-level <n>` for faster runs and smaller files; a sensible default is `--zstd-level 3`.
-```
