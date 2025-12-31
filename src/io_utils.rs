@@ -28,15 +28,13 @@ pub fn open_input(path: &str) -> Result<Box<dyn Read>, Box<dyn Error>> {
     }
 }
 
-/// Given an output base name, return file paths for R1, R2 and singletons.
-/// If `base` ends with `.gz` the returned names will also end with `.gz`.
-pub fn make_output_files(base: &str) -> (String, String, String) {
-    if base.ends_with(".gz") {
-        let trimmed = base.strip_suffix(".gz").unwrap_or(base);
+/// Given an output base name and gzip flag, return file paths for R1, R2 and singletons.
+pub fn make_output_files(base: &str, gz: bool) -> (String, String, String) {
+    if gz {
         (
-            format!("{}{}_R1.fastq.gz", trimmed, ""),
-            format!("{}{}_R2.fastq.gz", trimmed, ""),
-            format!("{}{}_singletons.fastq.gz", trimmed, ""),
+            format!("{}{}_R1.fastq.gz", base, ""),
+            format!("{}{}_R2.fastq.gz", base, ""),
+            format!("{}{}_singletons.fastq.gz", base, ""),
         )
     } else {
         (
@@ -110,7 +108,7 @@ mod tests {
 
     #[test]
     fn make_output_files_gz() {
-        let (r1, r2, single) = super::make_output_files("output.gz");
+        let (r1, r2, single) = super::make_output_files("output", true);
         assert_eq!(r1, "output_R1.fastq.gz");
         assert_eq!(r2, "output_R2.fastq.gz");
         assert_eq!(single, "output_singletons.fastq.gz");

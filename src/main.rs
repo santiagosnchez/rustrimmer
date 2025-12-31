@@ -45,6 +45,10 @@ struct Args {
     /// `<output>_R2.fastq(.gz)` and `<output>_singletons.fastq(.gz)`.
     #[arg(long)]
     output: Option<String>,
+
+    /// Force gzip compression for outputs (use `--gz` to enable)
+    #[arg(long, default_value_t = false)]
+    gz: bool,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -56,17 +60,26 @@ fn main() -> Result<(), Box<dyn Error>> {
             let reader = open_input(&path)?;
             let fq = fastq::Reader::new(BufReader::new(reader));
 
-            // prepare output writer
+            // prepare output writer (use `--gz` to enable compression)
             let writer: Box<dyn Write> = match &args.output {
-                Some(o) if o.ends_with(".gz") => {
-                    let f = File::create(o)?;
-                    Box::new(GzEncoder::new(BufWriter::new(f), Compression::default()))
-                }
                 Some(o) => {
                     let f = File::create(o)?;
-                    Box::new(BufWriter::new(f))
+                    if args.gz {
+                        Box::new(GzEncoder::new(BufWriter::new(f), Compression::default()))
+                    } else {
+                        Box::new(BufWriter::new(f))
+                    }
                 }
-                None => Box::new(io::stdout()),
+                None => {
+                    if args.gz {
+                        Box::new(GzEncoder::new(
+                            BufWriter::new(io::stdout()),
+                            Compression::default(),
+                        ))
+                    } else {
+                        Box::new(io::stdout())
+                    }
+                }
             };
             let mut fqw = fastq::Writer::new(writer);
 
@@ -104,8 +117,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             };
 
-            // build output filenames (handles optional .gz suffix)
-            let (r1_name, r2_name, single_name) = io_utils::make_output_files(&out_base);
+            // build output filenames based on `--gz` flag
+            let (r1_name, r2_name, single_name) = io_utils::make_output_files(&out_base, args.gz);
 
             // open input readers for counting/processing
             let _ = open_input(&p1)?; // validate paths early
@@ -119,14 +132,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // prepare output writers
             let make_writer = |name: &str| -> Result<Box<dyn Write>, Box<dyn Error>> {
-                if name.ends_with(".gz") {
-                    let f = File::create(name)?;
+                let f = File::create(name)?;
+                if args.gz {
                     Ok(Box::new(GzEncoder::new(
                         BufWriter::new(f),
                         Compression::default(),
                     )))
                 } else {
-                    let f = File::create(name)?;
                     Ok(Box::new(BufWriter::new(f)))
                 }
             };
