@@ -25,7 +25,8 @@ Check args:
 #       --qual <QUAL>        Quality threshold (Phred) for trimming ends; default 20 [default: 20]
 #       --min-len <MIN_LEN>  Minimum length to keep a read after trimming; default 30 [default: 30]
 #       --window <WINDOW>    Sliding window size for trimming; use 1 to check single-base quality (default) [default: 1]
-#       --output <OUTPUT>    Output base name for paired output files (required for paired mode). For paired mode this will create `<output>_R1.fastq(.gz)`, `<output>_R2.fastq(.gz)` and `<output>_singletons.fastq(.gz)`
+#       --output <OUTPUT>    Output file (single) or base name for paired outputs (required). For paired mode this will create `<output>_R1.fastq(.gz)`, `<output>_R2.fastq(.gz)` and `<output>_singletons.fastq(.gz)`.
+#       --gz                  Force gzip compression for outputs (use to create .gz files regardless of output name)
 #   -h, --help               Print help
 #   -V, --version            Print version
 ```
@@ -39,15 +40,14 @@ python3 tests/generate_test_fastq.py --number 100 --bad_fraction 0.3 > tests/sam
 
 ## **Run code**
 
-Run with Cargo (example):
+Run with Cargo (examples):
 ```bash
+# Paired-end (requires --output)
 ./target/release/rustrimmer --p1 tests/sample_R1.fastq --p2 tests/sample_R2.fastq --output tests/result
-# reads_R1: 100
-# reads_R2: 100
-# pairs_total: 100
-# pairs_kept: 54
-# pairs_dropped: 8
-# singletons: 38
+# Single-end (requires --output)
+./target/release/rustrimmer tests/sample_R1.fastq --output tests/result_single
+# Force gzip compression for outputs
+./target/release/rustrimmer --p1 tests/sample_R1.fastq --p2 tests/sample_R2.fastq --output tests/result --gz
 ```
 
 Output files:
@@ -56,4 +56,5 @@ ls ./tests/result*
 # ./tests/result_R1.fastq
 # ./tests/result_R2.fastq
 # ./tests/result_singletons.fastq
+# When using `--gz` the output files will end with `.fastq.gz` (for example `tests/result_R1.fastq.gz`).
 ```
