@@ -1,6 +1,6 @@
-# rusty — small Rust NGS learning project
+# rustrimmer — A Rust-based FASTQ read-trimmer
 
-This repo is a minimal Rust starter for NGS tasks. It includes a tiny CLI that counts reads and bases from a FASTQ/FASTQ.GZ file.
+This repo is intended as a minimal Rust starter for NGS tasks. It includes a CLI for trimming bad quality bases from the ends of reads in `fastq` files.
 
 ## **Release build & distribution**
 
