@@ -51,6 +51,25 @@ pub fn make_output_files(base: &str, gz: bool, zstd: bool) -> (String, String, S
     }
 }
 
+/// Return plain (non-.zst) filenames when `zstd` is true, otherwise return the
+/// provided names cloned as owned `String`s.
+pub fn make_plain_filenames(
+    r1: &str,
+    r2: &str,
+    single: &str,
+    zstd: bool,
+) -> (String, String, String) {
+    if zstd {
+        (
+            r1.trim_end_matches(".zst").to_string(),
+            r2.trim_end_matches(".zst").to_string(),
+            single.trim_end_matches(".zst").to_string(),
+        )
+    } else {
+        (r1.to_string(), r2.to_string(), single.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::open_input;

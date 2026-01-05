@@ -142,15 +142,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 io_utils::make_output_files(&out_base, args.gz, args.zstd);
 
             // when using zstd we will write plain fastq files first then compress to .zst
-            let (r1_plain, r2_plain, single_plain) = if args.zstd {
-                (
-                    r1_name.trim_end_matches(".zst").to_string(),
-                    r2_name.trim_end_matches(".zst").to_string(),
-                    single_name.trim_end_matches(".zst").to_string(),
-                )
-            } else {
-                (r1_name.clone(), r2_name.clone(), single_name.clone())
-            };
+            let (r1_plain, r2_plain, single_plain) =
+                io_utils::make_plain_filenames(&r1_name, &r2_name, &single_name, args.zstd);
 
             // open input readers for counting/processing
             let _ = open_input(&p1)?; // validate paths early
