@@ -1,0 +1,302 @@
+use bio::io::fastq;
+use clap::Parser;
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::error::Error;
+use std::fs::File;
+use std::io::copy;
+use std::io::BufWriter;
+use std::io::{BufReader, Write};
+use std::time::Instant;
+use zstd::stream::write::Encoder as ZstdEncoder;
+
+pub mod io_utils;
+pub mod trim;
+
+use crate::io_utils::open_input;
+use crate::trim::trim_record;
+
+#[derive(Parser)]
+#[command(author, version, about = "Simple FASTQ quality trimmer: removes low-quality bases from read ends using sliding window approach", long_about = None)]
+pub struct Args {
+    /// Input FASTQ (use '-' for stdin). Supports .gz compressed files.
+    /// Provide either a single input or both `--p1` and `--p2` for paired-end files.
+    pub input: Option<String>,
+
+    /// Paired-end R1 (e.g. sample_R1.fastq or .fastq.gz)
+    #[arg(long)]
+    pub p1: Option<String>,
+
+    /// Paired-end R2 (e.g. sample_R2.fastq or .fastq.gz)
+    #[arg(long)]
+    pub p2: Option<String>,
+
+    /// Quality threshold (Phred) for trimming ends; default 20
+    #[arg(long, default_value_t = 20)]
+    pub qual: u8,
+
+    /// Minimum length to keep a read after trimming; default 30
+    #[arg(long, default_value_t = 30)]
+    pub min_len: usize,
+
+    /// Sliding window size for trimming; use 1 to check single-base quality (default)
+    #[arg(long, default_value_t = 1)]
+    pub window: usize,
+
+    /// Output base name for paired output files (required for paired mode).
+    /// For paired mode this will create `<output>_R1.fastq(.gz)`,
+    /// `<output>_R2.fastq(.gz)` and `<output>_singletons.fastq(.gz)`.
+    #[arg(long)]
+    pub output: Option<String>,
+
+    /// Use gzip compression for outputs (enabled by default)
+    #[arg(long, default_value_t = true)]
+    pub gz: bool,
+
+    /// Gzip compression level for outputs (0-9). Lower is faster; 1 is a sensible fast default.
+    #[arg(long, default_value_t = 3)]
+    pub gz_level: u32,
+
+    /// Use zstd compression for outputs (faster). Mutually exclusive with `--gz`.
+    #[arg(long, default_value_t = false)]
+    pub zstd: bool,
+
+    /// zstd compression level (1-19). Lower is faster; default 3 is a sensible fast default.
+    #[arg(long, default_value_t = 3)]
+    pub zstd_level: i32,
+}
+
+pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
+    let start = Instant::now();
+
+    if args.gz && args.zstd {
+        return Err("Error: --gz and --zstd are mutually exclusive".into());
+    }
+
+    match (args.input, args.p1, args.p2) {
+        (Some(path), None, None) => {
+            // single-end mode: trimming enabled by default (counts kept for logging)
+            let reader = open_input(&path)?;
+            let fq = fastq::Reader::new(BufReader::new(reader));
+
+            // require `--output` (no stdout allowed)
+            let out_name = match &args.output {
+                Some(o) => o,
+                None => {
+                    return Err("Error: --output is required; stdout is not allowed".into());
+                }
+            };
+
+            let f = File::create(out_name)?;
+            let writer: Box<dyn Write> = if args.gz {
+                Box::new(GzEncoder::new(
+                    BufWriter::new(f),
+                    Compression::new(args.gz_level),
+                ))
+            } else if args.zstd {
+                Box::new(ZstdEncoder::new(BufWriter::new(f), args.zstd_level)?.auto_finish())
+            } else {
+                Box::new(BufWriter::new(f))
+            };
+            let mut fqw = fastq::Writer::new(writer);
+
+            let mut kept: u64 = 0;
+            let mut dropped: u64 = 0;
+            let mut read_count: u64 = 0;
+            let mut base_count: u64 = 0;
+
+            for result in fq.records() {
+                let rec = result?;
+                read_count += 1;
+                base_count += rec.seq().len() as u64;
+                if let Some((seq, qual)) =
+                    trim_record(rec.qual(), rec.seq(), args.qual, args.min_len, args.window)
+                {
+                    // write record with same id/desc
+                    fqw.write(rec.id(), rec.desc(), &seq, &qual)?;
+                    kept += 1;
+                } else {
+                    dropped += 1;
+                }
+            }
+
+            eprintln!("trimmed kept: {}  dropped: {}", kept, dropped);
+            println!("reads: {}", read_count);
+            println!("bases: {}", base_count);
+        }
+        (None, Some(p1), Some(p2)) => {
+            // paired-end mode: require output base name to write R1/R2 and singletons
+            let out_base = match &args.output {
+                Some(o) => o.clone(),
+                None => {
+                    return Err("Error: --output is required for paired-end mode".into());
+                }
+            };
+
+            // build output filenames based on `--gz`/`--zstd` flags
+            let (r1_name, r2_name, single_name) =
+                io_utils::make_output_files(&out_base, args.gz, args.zstd);
+
+            // when using zstd we will write plain fastq files first then compress to .zst
+            let (r1_plain, r2_plain, single_plain) =
+                io_utils::make_plain_filenames(&r1_name, &r2_name, &single_name, args.zstd);
+
+            // open input readers for counting/processing
+            let _ = open_input(&p1)?; // validate paths early
+            let _ = open_input(&p2)?;
+
+            let r1_proc = open_input(&p1)?;
+            let r2_proc = open_input(&p2)?;
+
+            let fq1 = fastq::Reader::new(BufReader::new(r1_proc));
+            let fq2 = fastq::Reader::new(BufReader::new(r2_proc));
+
+            // prepare output writers
+            let make_writer = |name: &str| -> Result<Box<dyn Write>, Box<dyn Error>> {
+                let f = File::create(name)?;
+                if args.gz {
+                    Ok(Box::new(GzEncoder::new(
+                        BufWriter::new(f),
+                        Compression::new(args.gz_level),
+                    )))
+                } else {
+                    // For zstd we create plain fastq files (no streaming encoder here)
+                    Ok(Box::new(BufWriter::new(f)))
+                }
+            };
+
+            let w1 = make_writer(&r1_plain)?;
+            let w2 = make_writer(&r2_plain)?;
+            let ws = make_writer(&single_plain)?;
+
+            let mut w_r1 = fastq::Writer::new(w1);
+            let mut w_r2 = fastq::Writer::new(w2);
+            let mut w_s = fastq::Writer::new(ws);
+
+            // iterate records in lock-step, handle leftovers as singletons
+            let mut iter1 = fq1.records();
+            let mut iter2 = fq2.records();
+
+            let mut pairs_total: u64 = 0;
+            let mut pairs_kept: u64 = 0;
+            let mut pairs_dropped: u64 = 0;
+            let mut singletons: u64 = 0;
+            let mut read_r1: u64 = 0;
+            let mut read_r2: u64 = 0;
+
+            loop {
+                match (iter1.next(), iter2.next()) {
+                    (None, None) => break,
+                    (Some(r1_res), Some(r2_res)) => {
+                        let rec1 = r1_res?;
+                        let rec2 = r2_res?;
+                        read_r1 += 1;
+                        read_r2 += 1;
+                        pairs_total += 1;
+
+                        let t1 = trim_record(
+                            rec1.qual(),
+                            rec1.seq(),
+                            args.qual,
+                            args.min_len,
+                            args.window,
+                        );
+                        let t2 = trim_record(
+                            rec2.qual(),
+                            rec2.seq(),
+                            args.qual,
+                            args.min_len,
+                            args.window,
+                        );
+
+                        match (t1, t2) {
+                            (Some((seq1, qual1)), Some((seq2, qual2))) => {
+                                w_r1.write(rec1.id(), rec1.desc(), &seq1, &qual1)?;
+                                w_r2.write(rec2.id(), rec2.desc(), &seq2, &qual2)?;
+                                pairs_kept += 1;
+                            }
+                            (Some((seq1, qual1)), None) => {
+                                w_s.write(rec1.id(), rec1.desc(), &seq1, &qual1)?;
+                                singletons += 1;
+                            }
+                            (None, Some((seq2, qual2))) => {
+                                w_s.write(rec2.id(), rec2.desc(), &seq2, &qual2)?;
+                                singletons += 1;
+                            }
+                            (None, None) => {
+                                pairs_dropped += 1;
+                            }
+                        }
+                    }
+                    (Some(r1_res), None) => {
+                        let rec1 = r1_res?;
+                        read_r1 += 1;
+                        // no partner - handle as singleton if it survives trimming
+                        if let Some((seq1, qual1)) = trim_record(
+                            rec1.qual(),
+                            rec1.seq(),
+                            args.qual,
+                            args.min_len,
+                            args.window,
+                        ) {
+                            w_s.write(rec1.id(), rec1.desc(), &seq1, &qual1)?;
+                            singletons += 1;
+                        }
+                    }
+                    (None, Some(r2_res)) => {
+                        let rec2 = r2_res?;
+                        read_r2 += 1;
+                        if let Some((seq2, qual2)) = trim_record(
+                            rec2.qual(),
+                            rec2.seq(),
+                            args.qual,
+                            args.min_len,
+                            args.window,
+                        ) {
+                            w_s.write(rec2.id(), rec2.desc(), &seq2, &qual2)?;
+                            singletons += 1;
+                        }
+                    }
+                }
+            }
+
+            println!("R1 reads: {}", read_r1);
+            println!("R2 reads: {}", read_r2);
+            println!("total pairs: {}", pairs_total);
+            println!("pairs kept: {}", pairs_kept);
+            println!("pairs dropped: {}", pairs_dropped);
+            println!("singletons: {}", singletons);
+            if read_r1 != read_r2 {
+                eprintln!(
+                    "warning: R1 and R2 have different read counts ({} != {})",
+                    read_r1, read_r2
+                );
+            }
+
+            // If zstd requested, compress the plain fastq files to .zst now.
+            if args.zstd {
+                let compress = |plain: &str, out_zst: &str| -> Result<(), Box<dyn Error>> {
+                    let mut src = File::open(plain)?;
+                    let dst = File::create(out_zst)?;
+                    let mut enc = ZstdEncoder::new(dst, args.zstd_level)?;
+                    copy(&mut src, &mut enc)?;
+                    enc.finish()?;
+                    std::fs::remove_file(plain)?;
+                    Ok(())
+                };
+
+                compress(&r1_plain, &r1_name)?;
+                compress(&r2_plain, &r2_name)?;
+                compress(&single_plain, &single_name)?;
+            }
+        }
+        _ => {
+            return Err("Error: provide either a positional input or both --p1 and --p2".into());
+        }
+    }
+
+    let elapsed = start.elapsed();
+    eprintln!("time elapsed: {:.3} s", elapsed.as_secs_f64());
+
+    Ok(())
+}
