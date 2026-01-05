@@ -138,4 +138,34 @@ mod tests {
         assert_eq!(r2, "output_R2.fastq.gz");
         assert_eq!(single, "output_singletons.fastq.gz");
     }
+
+    #[test]
+    fn make_output_files_plain_and_zstd() {
+        let (r1, r2, single) = super::make_output_files("out", false, false);
+        assert_eq!(r1, "out_R1.fastq");
+        assert_eq!(r2, "out_R2.fastq");
+        assert_eq!(single, "out_singletons.fastq");
+
+        let (zr1, zr2, zsingle) = super::make_output_files("out", false, true);
+        assert_eq!(zr1, "out_R1.fastq.zst");
+        assert_eq!(zr2, "out_R2.fastq.zst");
+        assert_eq!(zsingle, "out_singletons.fastq.zst");
+    }
+
+    #[test]
+    fn make_plain_filenames_trims_zst() {
+        let r1 = "sample_R1.fastq.zst";
+        let r2 = "sample_R2.fastq.zst";
+        let s = "sample_singletons.fastq.zst";
+        let (p1, p2, ps) = super::make_plain_filenames(r1, r2, s, true);
+        assert_eq!(p1, "sample_R1.fastq");
+        assert_eq!(p2, "sample_R2.fastq");
+        assert_eq!(ps, "sample_singletons.fastq");
+
+        // when zstd=false, names are cloned unchanged
+        let (c1, c2, cs) = super::make_plain_filenames(r1, r2, s, false);
+        assert_eq!(c1, r1.to_string());
+        assert_eq!(c2, r2.to_string());
+        assert_eq!(cs, s.to_string());
+    }
 }
