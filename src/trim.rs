@@ -9,51 +9,51 @@ pub fn trim_record(
     if qual.is_empty() || seq.is_empty() {
         return None;
     }
-    let mut left = 0usize;
-    let mut right = qual.len().saturating_sub(1);
+    let mut start_idx = 0usize;
+    let mut end_idx = qual.len().saturating_sub(1);
 
     if window <= 1 {
         // existing single-base trimming
-        while left <= right {
-            let q = qual[left].saturating_sub(33);
+        while start_idx <= end_idx {
+            let q = qual[start_idx].saturating_sub(33);
             if q >= qual_thr {
                 break;
             }
-            left += 1;
+            start_idx += 1;
         }
 
-        while right >= left {
-            let q = qual[right].saturating_sub(33);
+        while end_idx >= start_idx {
+            let q = qual[end_idx].saturating_sub(33);
             if q >= qual_thr {
                 break;
             }
-            if right == 0 {
+            if end_idx == 0 {
                 break;
             }
-            right = right.saturating_sub(1);
+            end_idx = end_idx.saturating_sub(1);
         }
     } else {
         // sliding-window trimming by average quality (fallback to single-base if window > read len)
         let n = qual.len();
         if window > n {
             // fallback to single-base trimming
-            while left <= right {
-                let q = qual[left].saturating_sub(33);
+            while start_idx <= end_idx {
+                let q = qual[start_idx].saturating_sub(33);
                 if q >= qual_thr {
                     break;
                 }
-                left += 1;
+                start_idx += 1;
             }
 
-            while right >= left {
-                let q = qual[right].saturating_sub(33);
+            while end_idx >= start_idx {
+                let q = qual[end_idx].saturating_sub(33);
                 if q >= qual_thr {
                     break;
                 }
-                if right == 0 {
+                if end_idx == 0 {
                     break;
                 }
-                right = right.saturating_sub(1);
+                end_idx = end_idx.saturating_sub(1);
             }
         } else {
             // compute integer scores (Phred-33) and prefix sums for fast window sums
@@ -77,10 +77,10 @@ pub fn trim_record(
                 }
             }
             if let Some(i) = found_left {
-                left = i;
+                start_idx = i;
             } else {
                 // no qualifying window -> entire read trimmed
-                left = n; // will trigger left > right
+                start_idx = n; // will trigger start_idx > end_idx
             }
 
             // find right: last window end j where average >= thr -> set right = j
@@ -93,24 +93,24 @@ pub fn trim_record(
                 }
             }
             if let Some(j) = found_right {
-                right = j;
+                end_idx = j;
             } else {
                 // no qualifying window found; keep right at 0 (left>right will handle drop)
-                right = 0;
+                end_idx = 0;
             }
         }
     }
 
-    if left > right {
+    if start_idx > end_idx {
         return None;
     }
-    let trimmed_len = right - left + 1;
+    let trimmed_len = end_idx - start_idx + 1;
     if trimmed_len < min_len {
         return None;
     }
 
-    let seq_slice = &seq[left..=right];
-    let qual_slice = &qual[left..=right];
+    let seq_slice = &seq[start_idx..=end_idx];
+    let qual_slice = &qual[start_idx..=end_idx];
     Some((seq_slice.to_vec(), qual_slice.to_vec()))
 }
 
@@ -130,7 +130,7 @@ mod tests {
         assert!(res.is_some());
         let (s, q) = res.unwrap();
         assert_eq!(s, b"GTAC".to_vec());
-        assert_eq!(q, vec![40+33,40+33,40+33,40+33]);
+        assert_eq!(q, vec![40 + 33, 40 + 33, 40 + 33, 40 + 33]);
     }
 
     #[test]
@@ -180,7 +180,12 @@ mod tests {
         let remaining_quals: Vec<u8> = q.into_iter().collect();
         // check that there exists a run of three low-quality chars (10+33)
         let low_char = 10u8 + 33;
-        let has_center_low = remaining_quals.windows(3).any(|w| w == [low_char, low_char, low_char]);
-        assert!(has_center_low, "expected central low-quality region to remain");
+        let has_center_low = remaining_quals
+            .windows(3)
+            .any(|w| w == [low_char, low_char, low_char]);
+        assert!(
+            has_center_low,
+            "expected central low-quality region to remain"
+        );
     }
 }
